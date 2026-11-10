@@ -1,6 +1,7 @@
 import {contextBridge} from "electron/renderer";
 
 import electron_bridge, {BridgeEvent, bridgeEvents} from "./electron-bridge.ts";
+import {initializeInlineMarkdownPreviews} from "./inline-markdown-preview.ts";
 import * as NetworkError from "./pages/network.ts";
 import {ipcRenderer} from "./typed-ipc-renderer.ts";
 
@@ -19,6 +20,10 @@ ipcRenderer.on("show-notification-settings", () => {
 });
 
 window.addEventListener("load", () => {
+  void initializeInlineMarkdownPreviews().catch((error: unknown) => {
+    console.error("Unable to initialize Markdown attachment previews", error);
+  });
+
   if (!location.href.includes("app/renderer/network.html")) {
     return;
   }

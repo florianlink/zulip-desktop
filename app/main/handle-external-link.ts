@@ -19,7 +19,7 @@ function isUploadsUrl(server: string, url: URL): boolean {
   return url.origin === server && url.pathname.startsWith("/user_uploads/");
 }
 
-function downloadFile({
+export function downloadFile({
   contents,
   url,
   downloadPath,
@@ -32,8 +32,16 @@ function downloadFile({
   completed(filePath: string, fileName: string): Promise<void>;
   failed(state: string): void;
 }) {
-  contents.downloadURL(url);
-  contents.session.once("will-download", (_downloadEvent, item) => {
+  const onDownload = (
+    _downloadEvent: Event,
+    item: Electron.DownloadItem,
+    downloadContents: WebContents,
+  ): void => {
+    if (downloadContents !== contents || item.getURLChain()[0] !== url) {
+      return;
+    }
+
+    contents.session.removeListener("will-download", onDownload);
     if (ConfigUtil.getConfigItem("promptDownload", false)) {
       const showDialogOptions: SaveDialogOptions = {
         defaultPath: path.join(downloadPath, item.getFilename()),
@@ -98,7 +106,14 @@ function downloadFile({
       // To stop item for listening to updated events of this file
       item.removeListener("updated", updatedListener);
     });
-  });
+  };
+  contents.session.on("will-download", onDownload);
+  try {
+    contents.downloadURL(url);
+  } catch (error: unknown) {
+    contents.session.removeListener("will-download", onDownload);
+    throw error;
+  }
 }
 
 export default function handleExternalLink(

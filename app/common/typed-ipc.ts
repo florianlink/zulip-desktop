@@ -1,4 +1,5 @@
 import type {DndSettings} from "./dnd-util.ts";
+import type {Config} from "./config-util.ts";
 import type {MenuProperties, ServerConfig} from "./types.ts";
 
 export type MainMessage = {
@@ -26,15 +27,23 @@ export type MainMessage = {
 };
 
 export type MainCall = {
+  "get-markdown-preview-labels": () => {preview: string; error: string};
+  "get-recent-downloads": () => Config["recentDownloads"];
   "get-server-settings": (domain: string) => ServerConfig;
   "is-online": (url: string) => boolean;
+  "open-download": (filePath: string) => string;
+  "open-markdown-preview": (filePath: string, html: string) => void;
   "poll-clipboard": (key: Uint8Array, sig: Uint8Array) => string | undefined;
+  "preview-markdown-url": (url: string) => void;
+  "read-markdown-download": (filePath: string) => string;
+  "reveal-download": (filePath: string) => void;
   "save-server-icon": (iconURL: string) => string | null;
 };
 
 export type RendererMessage = {
   back: () => void;
   "copy-zulip-url": () => void;
+  "downloads-updated": (downloads: Config["recentDownloads"]) => void;
   "enter-fullscreen": () => void;
   focus: () => void;
   "focus-webview-with-id": (webviewId: number) => void;
@@ -54,6 +63,7 @@ export type RendererMessage = {
     rendererCallbackId: number,
   ) => void;
   "play-ding-sound": () => void;
+  "preview-markdown-download": (filePath: string) => void;
   "reload-current-viewer": () => void;
   "reload-proxy": (showAlert: boolean) => void;
   "reload-viewer": () => void;
@@ -63,6 +73,7 @@ export type RendererMessage = {
   "set-idle": () => void;
   "show-keyboard-shortcuts": () => void;
   "show-notification-settings": () => void;
+  "show-recent-downloads": () => void;
   "switch-server-tab": (index: number) => void;
   "tab-devtools": () => void;
   "toggle-autohide-menubar": (

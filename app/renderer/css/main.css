@@ -10,6 +10,125 @@ body {
   user-select: none;
 }
 
+.downloads-panel {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 20;
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 16px;
+  border: 1px solid rgb(204 204 204);
+  border-radius: 8px;
+  background: rgb(255 255 255);
+  color: rgb(34 34 34);
+  box-shadow: 0 4px 20px rgb(0 0 0 / 25%);
+  font-family: sans-serif;
+  font-size: 12px;
+}
+
+.downloads-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.downloads-heading {
+  margin: 0;
+  font-size: 14px;
+}
+
+.downloads-list {
+  max-height: calc(100vh - 160px);
+  margin: 12px 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.downloads-list li {
+  padding: 4px 0;
+}
+
+.downloads-list .download-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.downloads-panel button {
+  padding: 8px;
+  border: 1px solid rgb(204 204 204);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.downloads-panel button:hover {
+  background: rgb(238 238 238);
+}
+
+.downloads-panel .download-file {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.downloads-panel .reveal-download,
+.downloads-panel .preview-download {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.downloads-panel .download-icon {
+  font-size: 16px;
+}
+
+.downloads-panel .download-row:hover .reveal-download,
+.downloads-panel .download-row:focus-within .reveal-download,
+.downloads-panel .download-row:hover .preview-download,
+.downloads-panel .download-row:focus-within .preview-download {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.downloads-error {
+  color: rgb(187 0 0);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-color-scheme: dark) {
+  .downloads-panel {
+    border-color: rgb(85 85 85);
+    background: rgb(34 34 34);
+    color: rgb(238 238 238);
+  }
+
+  .downloads-panel button {
+    border-color: rgb(85 85 85);
+  }
+
+  .downloads-panel button:hover {
+    background: rgb(51 51 51);
+  }
+
+  .downloads-error {
+    color: rgb(255 144 144);
+  }
+}
+
 #content {
   display: flex;
   height: 100%;
