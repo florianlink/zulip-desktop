@@ -13,6 +13,7 @@ import * as LinkUtil from "../common/link-util.ts";
 import Logger from "../common/logger-util.ts";
 import {isMarkdownUploadUrl} from "../common/markdown-util.ts";
 import {t} from "../common/translation-util.ts";
+import type {DownloadEntry} from "../common/typed-ipc.ts";
 
 import {downloadFile} from "./handle-external-link.ts";
 import {ipcMain, send} from "./typed-ipc-main.ts";
@@ -23,6 +24,28 @@ export function initializeDownloads(
   session: Session,
   mainContents: WebContents,
 ): void {
+  const activeDownloads = new Map<
+    Electron.DownloadItem,
+    DownloadEntry | undefined
+  >();
+  const getDownloads = (): DownloadEntry[] => {
+    const active = [...activeDownloads.values()]
+      .filter((download) => download !== undefined)
+      .reverse();
+    return [
+      ...active,
+      ...ConfigUtil.getConfigItem("recentDownloads", []).filter(
+        (download) =>
+          !active.some((item) => item.filePath === download.filePath),
+      ),
+    ];
+  };
+  const notifyDownloads = (show: boolean): void => {
+    if (!mainContents.isDestroyed()) {
+      send(mainContents, "downloads-updated", getDownloads(), show);
+    }
+  };
+
   ipcMain.handle("get-markdown-preview-labels", () => ({
     preview: t.__("Preview Markdown"),
     error: t.__("Unable to preview downloaded file."),
@@ -77,6 +100,9 @@ export function initializeDownloads(
       typeof filePath !== "string" ||
       !ConfigUtil.getConfigItem("recentDownloads", []).some(
         (download) => download.filePath === filePath,
+      ) ||
+      [...activeDownloads.values()].some(
+        (download) => download?.filePath === filePath,
       )
     ) {
       throw new Error("Cannot access a file outside the download history");
@@ -88,7 +114,7 @@ export function initializeDownloads(
       throw new Error("Download history is only available to the app window");
     }
 
-    return ConfigUtil.getConfigItem("recentDownloads", []);
+    return getDownloads();
   });
 
   ipcMain.handle("open-download", async (event, filePath) => {
@@ -220,22 +246,52 @@ export function initializeDownloads(
   });
 
   session.on("will-download", (_event, item) => {
-    item.once("done", (_doneEvent, state) => {
-      if (state !== "completed") {
+    activeDownloads.set(item, undefined);
+    const updateDownload = (): void => {
+      if (!activeDownloads.has(item)) {
         return;
       }
 
       const filePath = item.getSavePath();
-      const downloads = [
-        {filePath, fileName: path.basename(filePath)},
-        ...ConfigUtil.getConfigItem("recentDownloads", []).filter(
-          (download) => download.filePath !== filePath,
-        ),
-      ];
-      ConfigUtil.setConfigItem("recentDownloads", downloads);
-      if (!mainContents.isDestroyed()) {
-        send(mainContents, "downloads-updated", downloads);
+      if (!filePath) {
+        return;
       }
+
+      const total = item.getTotalBytes();
+      const progress =
+        total > 0
+          ? Math.min(100, Math.floor((item.getReceivedBytes() / total) * 100))
+          : null;
+      const previous = activeDownloads.get(item);
+      if (previous?.filePath === filePath && previous.progress === progress) {
+        return;
+      }
+
+      activeDownloads.set(item, {
+        filePath,
+        fileName: path.basename(filePath),
+        progress,
+      });
+      notifyDownloads(previous === undefined);
+    };
+    item.on("updated", updateDownload);
+    // Other will-download listeners may still need to choose the save path.
+    queueMicrotask(updateDownload);
+    item.once("done", (_doneEvent, state) => {
+      activeDownloads.delete(item);
+      item.removeListener("updated", updateDownload);
+      if (state === "completed") {
+        const filePath = item.getSavePath();
+        const downloads = [
+          {filePath, fileName: path.basename(filePath)},
+          ...ConfigUtil.getConfigItem("recentDownloads", []).filter(
+            (download) => download.filePath !== filePath,
+          ),
+        ];
+        ConfigUtil.setConfigItem("recentDownloads", downloads);
+      }
+
+      notifyDownloads(state === "completed");
     });
   });
 }

@@ -350,6 +350,179 @@ test("recent downloads popup", async (t) => {
   }
 });
 
+test("active download progress", async (t) => {
+  t.timeoutAfter(60e3);
+  const responses = new Map<string, http.ServerResponse>();
+  const server = http.createServer((request, response) => {
+    const fileName = request.url!.slice(1);
+    responses.set(fileName, response);
+    response.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      ...(fileName === "unknown.txt" ? {} : {"Content-Length": "1000"}),
+    });
+    response.write(Buffer.alloc(100, "a"));
+  });
+  let app = await setup.createApp();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Test download server did not start");
+    }
+
+    const userData = await app.evaluate(({app}) => app.getPath("userData"));
+    const startDownload = async (fileName: string, cancel = false) => {
+      await app.evaluate(
+        ({session}, {url, filePath, cancel}) => {
+          const downloads = session.fromPartition("persist:webviewsession");
+          downloads.once("will-download", (_event, item) => {
+            item.setSavePath(filePath);
+            if (cancel) {
+              item.on("updated", () => {
+                if (item.getReceivedBytes() >= 500) {
+                  item.cancel();
+                }
+              });
+            }
+          });
+          downloads.downloadURL(url);
+        },
+        {
+          url: `http://127.0.0.1:${address.port}/${fileName}`,
+          filePath: path.join(userData, fileName),
+          cancel,
+        },
+      );
+    };
+    let window = await app.firstWindow();
+    await window.waitForSelector("#connect");
+    await startDownload("slow.md");
+    await window.waitForFunction(
+      () =>
+        document.querySelector(".download-progress")?.textContent ===
+        "(10 % downloaded)",
+    );
+    t.equal(
+      await window.textContent(".download-file"),
+      "slow.md",
+      "active download appears before completion",
+    );
+    t.equal(await window.locator(".download-active").count(), 1);
+    t.ok(
+      await window
+        .locator(".download-active")
+        .evaluate(
+          (element) =>
+            getComputedStyle(element).backgroundColor !== "rgba(0, 0, 0, 0)",
+        ),
+      "active row has a visible highlight",
+    );
+    t.equal(
+      await window.locator(".download-row button:disabled").count(),
+      3,
+      "open, preview and reveal are disabled until completion",
+    );
+    await window.click("#close-downloads");
+    responses.get("slow.md")!.write(Buffer.alloc(400, "b"));
+    await window.waitForFunction(
+      () =>
+        document.querySelector(".download-progress")?.textContent ===
+        "(50 % downloaded)",
+    );
+    t.notOk(
+      await window.isVisible("#downloads-panel"),
+      "progress updates do not reopen a dismissed panel",
+    );
+    await app.evaluate(({Menu}) => {
+      Menu.getApplicationMenu()!
+        .items.flatMap((item) => item.submenu?.items ?? [])
+        .find((item) => item.label === "Recent Downloads")!
+        .click();
+    });
+    await window.waitForSelector("#downloads-panel");
+    t.equal(
+      await window.textContent(".download-progress"),
+      "(50 % downloaded)",
+      "reopening the panel includes current progress",
+    );
+    await startDownload("cancelled.txt", true);
+    await window.waitForFunction(
+      () => document.querySelectorAll(".download-active").length === 2,
+    );
+    t.equal(
+      await window.locator(".download-file").first().textContent(),
+      "cancelled.txt",
+      "new concurrent download is first",
+    );
+    responses.get("cancelled.txt")!.write(Buffer.alloc(400, "b"));
+    await window.waitForFunction(
+      () => document.querySelectorAll(".download-row").length === 1,
+    );
+    t.equal(
+      await window.textContent(".download-file"),
+      "slow.md",
+      "cancelling removes only the cancelled download",
+    );
+    responses.get("slow.md")!.end(Buffer.alloc(500, "c"));
+    await window.waitForFunction(
+      () =>
+        document.querySelectorAll(".download-active").length === 0 &&
+        document.querySelectorAll(".download-row button:disabled").length === 0,
+    );
+    t.notOk(
+      await window.isVisible(".download-progress"),
+      "progress disappears on completion",
+    );
+    await startDownload("unknown.txt");
+    await window.waitForFunction(
+      () =>
+        document.querySelector(".download-progress")?.textContent ===
+        "(Downloading...)",
+    );
+    t.pass("unknown download sizes show an indeterminate label");
+    responses.get("unknown.txt")!.end("done");
+    await window.waitForFunction(
+      () => document.querySelectorAll(".download-active").length === 0,
+    );
+    app = await setup.restartApp(app);
+    window = await app.firstWindow();
+    await window.waitForSelector("#connect");
+    await app.evaluate(({Menu}) => {
+      Menu.getApplicationMenu()!
+        .items.flatMap((item) => item.submenu?.items ?? [])
+        .find((item) => item.label === "Recent Downloads")!
+        .click();
+    });
+    await window.waitForSelector(".download-file");
+    t.deepEqual(
+      await window.locator(".download-file").allTextContents(),
+      ["unknown.txt", "slow.md"],
+      "only completed downloads persist, without progress",
+    );
+    t.equal(await window.locator(".download-active").count(), 0);
+  } finally {
+    for (const response of responses.values()) {
+      response.destroy();
+    }
+
+    await setup.endTest(app);
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+  }
+});
+
 test("Markdown download preview", async (t) => {
   t.timeoutAfter(60e3);
   const server = http.createServer((_request, response) => {

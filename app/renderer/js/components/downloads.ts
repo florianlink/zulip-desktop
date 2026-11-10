@@ -3,11 +3,11 @@ import fs from "node:fs/promises";
 import DOMPurify from "dompurify";
 import MarkdownIt from "markdown-it";
 
-import type {Config} from "../../../common/config-util.ts";
 import * as ConfigUtil from "../../../common/config-util.ts";
 import {html} from "../../../common/html.ts";
 import Logger from "../../../common/logger-util.ts";
 import {t} from "../../../common/translation-util.ts";
+import type {DownloadEntry} from "../../../common/typed-ipc.ts";
 import {ipcRenderer} from "../typed-ipc-renderer.ts";
 
 const logger = new Logger({file: "downloads.log"});
@@ -56,9 +56,11 @@ export class DownloadsView {
       }
     });
 
-    ipcRenderer.on("downloads-updated", (_event, downloads) => {
+    ipcRenderer.on("downloads-updated", (_event, downloads, show) => {
       this.render(downloads);
-      void this.show(false);
+      if (show) {
+        void this.show(false);
+      }
     });
     ipcRenderer.on("show-recent-downloads", () => {
       void this.open();
@@ -121,9 +123,20 @@ export class DownloadsView {
     this.error.hidden = false;
   }
 
-  private render(downloads: Config["recentDownloads"]): void {
-    this.list.replaceChildren();
-    this.error.hidden = true;
+  private render(downloads: DownloadEntry[]): void {
+    const rows = new Map(
+      [...this.list.querySelectorAll<HTMLLIElement>(".download-row")].map(
+        (item) => [item.dataset.filePath, item],
+      ),
+    );
+    const paths = new Set(downloads.map((download) => download.filePath));
+    for (const [filePath, row] of rows) {
+      if (filePath === undefined || !paths.has(filePath)) {
+        row.remove();
+      }
+    }
+
+    this.list.querySelector(".downloads-empty")?.remove();
     if (downloads.length === 0) {
       const empty = document.createElement("li");
       empty.className = "downloads-empty";
@@ -131,60 +144,83 @@ export class DownloadsView {
       this.list.append(empty);
     }
 
-    for (const download of downloads) {
-      const item = document.createElement("li");
-      item.className = "download-row";
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "download-file";
-      button.textContent = download.fileName;
-      button.title = download.filePath;
-      button.addEventListener("click", () => {
-        void this.openFile(download.filePath);
-      });
-      if (download.fileName.toLowerCase().endsWith(".md")) {
-        const previewButton = document.createElement("button");
-        previewButton.type = "button";
-        previewButton.className = "preview-download";
-        previewButton.title = t.__("Preview Markdown");
-        previewButton.setAttribute(
-          "aria-label",
-          t.__("Preview {{{fileName}}}", {fileName: download.fileName}),
-        );
-        const previewIcon = document.createElement("span");
-        previewIcon.className = "material-icons download-icon";
-        previewIcon.setAttribute("aria-hidden", "true");
-        previewIcon.textContent = "visibility";
-        previewButton.append(previewIcon);
-        previewButton.addEventListener("click", () => {
-          void this.previewFile(download.filePath);
-        });
-        item.append(button, previewButton);
-      } else {
-        item.append(button);
+    for (const [index, download] of downloads.entries()) {
+      const item = rows.get(download.filePath) ?? this.createRow(download);
+      const active = download.progress !== undefined;
+      item.classList.toggle("download-active", active);
+      item.setAttribute("aria-busy", String(active));
+      const progress = item.querySelector<HTMLElement>(".download-progress")!;
+      progress.hidden = !active;
+      progress.textContent = active
+        ? download.progress === null
+          ? t.__("(Downloading...)")
+          : t.__("({{{progress}}} % downloaded)", {
+              progress: String(download.progress),
+            })
+        : "";
+      for (const button of item.querySelectorAll("button")) {
+        button.disabled = active;
       }
 
-      const revealButton = document.createElement("button");
-      revealButton.type = "button";
-      revealButton.className = "reveal-download";
-      revealButton.title = t.__("Show in folder");
-      revealButton.setAttribute(
+      if (this.list.children[index] !== item) {
+        this.list.insertBefore(item, this.list.children[index] ?? null);
+      }
+    }
+  }
+
+  private createRow(download: DownloadEntry): HTMLLIElement {
+    const item = document.createElement("li");
+    item.className = "download-row";
+    item.dataset.filePath = download.filePath;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "download-file";
+    button.textContent = download.fileName;
+    button.title = download.filePath;
+    button.addEventListener("click", () => {
+      void this.openFile(download.filePath);
+    });
+    const progress = document.createElement("span");
+    progress.className = "download-progress";
+    item.append(button, progress);
+    if (download.fileName.toLowerCase().endsWith(".md")) {
+      const previewButton = document.createElement("button");
+      previewButton.type = "button";
+      previewButton.className = "preview-download";
+      previewButton.title = t.__("Preview Markdown");
+      previewButton.setAttribute(
         "aria-label",
-        t.__("Show {{{fileName}}} in folder", {fileName: download.fileName}),
+        t.__("Preview {{{fileName}}}", {fileName: download.fileName}),
       );
-      const icon = document.createElement("span");
-      icon.className = "material-icons download-icon";
-      icon.setAttribute("aria-hidden", "true");
-      icon.textContent = "folder_open";
-      revealButton.append(icon);
-      revealButton.addEventListener("click", () => {
-        void this.revealFile(download.filePath);
+      const previewIcon = document.createElement("span");
+      previewIcon.className = "material-icons download-icon";
+      previewIcon.setAttribute("aria-hidden", "true");
+      previewIcon.textContent = "visibility";
+      previewButton.append(previewIcon);
+      previewButton.addEventListener("click", () => {
+        void this.previewFile(download.filePath);
       });
-      item.append(revealButton);
-      this.list.append(item);
+      item.append(previewButton);
     }
 
-    this.list.scrollTop = 0;
+    const revealButton = document.createElement("button");
+    revealButton.type = "button";
+    revealButton.className = "reveal-download";
+    revealButton.title = t.__("Show in folder");
+    revealButton.setAttribute(
+      "aria-label",
+      t.__("Show {{{fileName}}} in folder", {fileName: download.fileName}),
+    );
+    const icon = document.createElement("span");
+    icon.className = "material-icons download-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "folder_open";
+    revealButton.append(icon);
+    revealButton.addEventListener("click", () => {
+      void this.revealFile(download.filePath);
+    });
+    item.append(revealButton);
+    return item;
   }
 
   private async previewFile(filePath: string): Promise<void> {

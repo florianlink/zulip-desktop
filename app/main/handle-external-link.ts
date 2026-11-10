@@ -84,7 +84,6 @@ export function downloadFile({
             item.cancel();
           }
 
-          // This event can also be used to show progress in percentage in future.
           break;
         }
 

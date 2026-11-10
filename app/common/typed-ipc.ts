@@ -2,6 +2,10 @@ import type {DndSettings} from "./dnd-util.ts";
 import type {Config} from "./config-util.ts";
 import type {MenuProperties, ServerConfig} from "./types.ts";
 
+export type DownloadEntry = Config["recentDownloads"][number] & {
+  progress?: number | null;
+};
+
 export type MainMessage = {
   "clear-app-settings": () => void;
   "configure-spell-checker": () => void;
@@ -28,7 +32,7 @@ export type MainMessage = {
 
 export type MainCall = {
   "get-markdown-preview-labels": () => {preview: string; error: string};
-  "get-recent-downloads": () => Config["recentDownloads"];
+  "get-recent-downloads": () => DownloadEntry[];
   "get-server-settings": (domain: string) => ServerConfig;
   "is-online": (url: string) => boolean;
   "open-download": (filePath: string) => string;
@@ -43,7 +47,7 @@ export type MainCall = {
 export type RendererMessage = {
   back: () => void;
   "copy-zulip-url": () => void;
-  "downloads-updated": (downloads: Config["recentDownloads"]) => void;
+  "downloads-updated": (downloads: DownloadEntry[], show: boolean) => void;
   "enter-fullscreen": () => void;
   focus: () => void;
   "focus-webview-with-id": (webviewId: number) => void;

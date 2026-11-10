@@ -20,8 +20,10 @@ Please see the [installation guide](https://zulip.com/help/desktop-app-install-g
 - Tray/dock integration
 - Multi-language spell checker
 - Automatic updates
-- Recent downloads panel: opens when a download completes and can be reopened
-  from **View > Recent Downloads**. Click a filename to open the saved file, or
+- Recent downloads panel: opens when a download starts and can be reopened
+  from **View > Recent Downloads**. Active files are highlighted and show
+  `(X % downloaded)` until completion (or a downloading label when the size is
+  unknown). Click a filename to open the saved file, or
   use the folder icon to reveal it in the file manager. Download history is kept
   across restarts.
 - Markdown attachments in chat have an eye icon (**Preview Markdown**) beside their
