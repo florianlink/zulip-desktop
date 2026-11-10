@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
@@ -120,10 +121,33 @@ test("recent downloads popup", async (t) => {
     await showFromMenu();
     await window.waitForSelector("#downloads-panel");
     t.equal(
+      await window.getAttribute("#close-downloads", "aria-label"),
+      "Close",
+      "icon-only close button has an accessible label",
+    );
+    t.equal(
+      await window.textContent("#close-downloads .material-icons"),
+      "close",
+      "close button displays the X icon",
+    );
+    t.equal(
+      await window.getAttribute(
+        "#close-downloads .material-icons",
+        "aria-hidden",
+      ),
+      "true",
+      "close icon is hidden from assistive technology",
+    );
+    t.equal(
       await window.textContent("#downloads-list"),
       "No recent downloads.",
     );
     await window.click("#close-downloads");
+    t.equal(
+      await window.isVisible("#downloads-panel"),
+      false,
+      "X button closes the downloads popup",
+    );
 
     await download(app, url, "cancelled.txt", true);
     t.equal(
@@ -162,6 +186,60 @@ test("recent downloads popup", async (t) => {
       "long filenames are truncated with ellipsis",
     );
     t.equal(await window.getAttribute(".download-file", "title"), filePath);
+    t.ok(
+      await window.$eval(".download-row", (row) => {
+        const bounds = row.getBoundingClientRect();
+        return (
+          getComputedStyle(row).borderTopWidth === "1px" &&
+          [...row.querySelectorAll("button")].every((button) => {
+            const buttonBounds = button.getBoundingClientRect();
+            return (
+              getComputedStyle(button).borderTopWidth === "0px" &&
+              buttonBounds.left > bounds.left &&
+              buttonBounds.right < bounds.right &&
+              buttonBounds.top > bounds.top &&
+              buttonBounds.bottom < bounds.bottom
+            );
+          })
+        );
+      }),
+      "filename and actions share a single enclosing row border",
+    );
+    t.ok(
+      await window.$eval(".download-row", (row) => {
+        const file = row
+          .querySelector(".download-file")!
+          .getBoundingClientRect();
+        const actions = row.querySelector(".download-actions")!;
+        const actionBounds = actions.getBoundingClientRect();
+        const style = getComputedStyle(actions);
+        return (
+          file.right >= actionBounds.right &&
+          file.left < actionBounds.left &&
+          style.position === "absolute" &&
+          style.borderTopWidth === "1px" &&
+          ["rgb(255, 255, 255)", "rgb(34, 34, 34)"].includes(
+            style.backgroundColor,
+          )
+        );
+      }),
+      "filename extends behind an opaque, bordered action overlay",
+    );
+    t.ok(
+      await window.$eval(".download-row", (row) =>
+        [...row.querySelectorAll<HTMLElement>(".download-icon")].every(
+          (icon) => {
+            const button = icon.parentElement!.getBoundingClientRect();
+            return (
+              getComputedStyle(icon).fontSize === "14px" &&
+              button.width === 24 &&
+              button.height === 24
+            );
+          },
+        ),
+      ),
+      "download icons are compact with 24px action buttons",
+    );
 
     await app.evaluate(({shell}) => {
       const revealedPaths: string[] = [];
@@ -176,7 +254,7 @@ test("recent downloads popup", async (t) => {
     await window.locator("#downloads-heading").hover();
     t.equal(
       await revealButton.evaluate(
-        (element) => getComputedStyle(element).opacity,
+        (element) => getComputedStyle(element.parentElement!).opacity,
       ),
       "0",
       "folder icon is hidden when the row is not hovered",
@@ -184,7 +262,7 @@ test("recent downloads popup", async (t) => {
     await window.locator(".download-row").hover();
     t.equal(
       await revealButton.evaluate(
-        (element) => getComputedStyle(element).opacity,
+        (element) => getComputedStyle(element.parentElement!).opacity,
       ),
       "1",
       "folder icon appears on hover",
@@ -206,7 +284,7 @@ test("recent downloads popup", async (t) => {
     await revealButton.focus();
     t.equal(
       await revealButton.evaluate(
-        (element) => getComputedStyle(element).opacity,
+        (element) => getComputedStyle(element.parentElement!).opacity,
       ),
       "1",
       "folder icon is visible to keyboard users",
@@ -422,8 +500,8 @@ test("active download progress", async (t) => {
     );
     t.equal(
       await window.locator(".download-row button:disabled").count(),
-      3,
-      "open, preview and reveal are disabled until completion",
+      4,
+      "open, preview, reveal and delete are disabled until completion",
     );
     await window.click("#close-downloads");
     responses.get("slow.md")!.write(Buffer.alloc(400, "b"));
@@ -476,6 +554,24 @@ test("active download progress", async (t) => {
       await window.isVisible(".download-progress"),
       "progress disappears on completion",
     );
+    t.equal(
+      await window.locator(".download-highlighted").count(),
+      1,
+      "the completed file stays highlighted",
+    );
+    await window.click("#close-downloads");
+    await app.evaluate(({Menu}) => {
+      Menu.getApplicationMenu()!
+        .items.flatMap((item) => item.submenu?.items ?? [])
+        .find((item) => item.label === "Recent Downloads")!
+        .click();
+    });
+    await window.waitForSelector("#downloads-panel");
+    t.equal(
+      await window.locator(".download-highlighted").count(),
+      1,
+      "the highlight survives reopening the panel",
+    );
     await startDownload("unknown.txt");
     await window.waitForFunction(
       () =>
@@ -503,11 +599,187 @@ test("active download progress", async (t) => {
       "only completed downloads persist, without progress",
     );
     t.equal(await window.locator(".download-active").count(), 0);
+    t.equal(
+      await window.locator(".download-highlighted").count(),
+      0,
+      "previous-session files are not highlighted",
+    );
   } finally {
     for (const response of responses.values()) {
       response.destroy();
     }
 
+    await setup.endTest(app);
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+  }
+});
+
+test("delete downloaded files", async (t) => {
+  t.timeoutAfter(60e3);
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, {"Content-Type": "application/octet-stream"});
+    response.end("Downloaded file contents");
+  });
+  let app = await setup.createApp();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("Test download server did not start");
+    }
+
+    const url = `http://127.0.0.1:${address.port}/file`;
+    let window = await app.firstWindow();
+    await window.waitForSelector("#connect");
+    const keptPath = await download(app, url, "keep.txt");
+    const deletedPath = await download(app, url, "delete.txt");
+    await window.waitForFunction(
+      () => document.querySelectorAll(".download-row").length === 2,
+    );
+    const deleteButton = window.locator(".delete-download").first();
+    await window.locator("#downloads-heading").hover();
+    t.equal(
+      await deleteButton.evaluate(
+        (element) => getComputedStyle(element.parentElement!).opacity,
+      ),
+      "0",
+      "trash icon is hidden when not hovered",
+    );
+    await window.locator(".download-row").first().hover();
+    t.equal(
+      await deleteButton.evaluate(
+        (element) => getComputedStyle(element.parentElement!).opacity,
+      ),
+      "1",
+      "trash icon appears on hover",
+    );
+    t.equal(await deleteButton.getAttribute("aria-label"), "Delete delete.txt");
+
+    const confirmDeletion = async (response: number) => {
+      await app.evaluate(({dialog}, response) => {
+        dialog.showMessageBox = async (
+          ...args:
+            | [Electron.MessageBoxOptions]
+            | [Electron.BaseWindow, Electron.MessageBoxOptions]
+        ) => {
+          const options = args.length === 2 ? args[1] : args[0];
+          Reflect.set(dialog, "downloadDeletePrompt", options);
+          return {response, checkboxChecked: false};
+        };
+      }, response);
+    };
+    await confirmDeletion(1);
+    await deleteButton.click();
+    await app.evaluate(async ({dialog}) => {
+      const deadline = Date.now() + 5000;
+      while (!Reflect.has(dialog, "downloadDeletePrompt")) {
+        if (Date.now() >= deadline) {
+          throw new Error("No deletion confirmation shown");
+        }
+
+        await new Promise((resolve) => {
+          setTimeout(resolve, 20);
+        });
+      }
+    });
+    t.deepEqual(
+      await app.evaluate(({dialog}) =>
+        Reflect.get(dialog, "downloadDeletePrompt"),
+      ),
+      {
+        type: "warning",
+        buttons: ["Delete", "Cancel"],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        message: "Are you sure you want to delete delete.txt?",
+        detail: "The file will be moved to the trash.\n" + deletedPath,
+      },
+      "confirmation identifies the file and defaults to Cancel",
+    );
+    t.equal(
+      await fs.readFile(deletedPath, "utf8"),
+      "Downloaded file contents",
+      "cancelling keeps the file",
+    );
+    t.equal(
+      await window.locator(".download-row").count(),
+      2,
+      "cancelling keeps the history entry",
+    );
+
+    await confirmDeletion(0);
+    await window.locator("#downloads-heading").hover();
+    await deleteButton.focus();
+    t.equal(
+      await deleteButton.evaluate(
+        (element) => getComputedStyle(element.parentElement!).opacity,
+      ),
+      "1",
+      "trash icon is visible on keyboard focus",
+    );
+    await window.keyboard.press("Enter");
+    await window.waitForFunction(
+      () => document.querySelectorAll(".download-row").length === 1,
+    );
+    await assert.rejects(fs.access(deletedPath), {code: "ENOENT"});
+    t.pass("confirmed deletion moves the file out of its download location");
+    t.equal(
+      await fs.readFile(keptPath, "utf8"),
+      "Downloaded file contents",
+      "deleting affects only the selected file",
+    );
+    t.equal(await window.textContent(".download-file"), "keep.txt");
+
+    const blockedPath = await download(app, url, "blocked.txt");
+    await window.waitForFunction(
+      () => document.querySelectorAll(".download-row").length === 2,
+    );
+    await app.evaluate(({shell}) => {
+      shell.trashItem = async () => {
+        throw new Error("Test trash failure");
+      };
+    });
+    await window.locator(".download-row").first().hover();
+    await window.locator(".delete-download").first().click();
+    await window.waitForSelector("#downloads-error");
+    t.equal(
+      await window.textContent("#downloads-error"),
+      "Unable to delete downloaded file.",
+      "trash failures are shown to the user",
+    );
+    t.equal(await window.locator(".download-row").count(), 2);
+    t.equal(await fs.readFile(blockedPath, "utf8"), "Downloaded file contents");
+
+    app = await setup.restartApp(app);
+    window = await app.firstWindow();
+    await window.waitForSelector("#connect");
+    await app.evaluate(({Menu}) => {
+      Menu.getApplicationMenu()!
+        .items.flatMap((item) => item.submenu?.items ?? [])
+        .find((item) => item.label === "Recent Downloads")!
+        .click();
+    });
+    await window.waitForSelector(".download-file");
+    t.deepEqual(
+      await window.locator(".download-file").allTextContents(),
+      ["blocked.txt", "keep.txt"],
+      "successful deletion removes history permanently; failed deletion does not",
+    );
+  } finally {
     await setup.endTest(app);
     if (server.listening) {
       await new Promise<void>((resolve, reject) => {

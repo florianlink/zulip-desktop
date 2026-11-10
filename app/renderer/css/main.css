@@ -53,9 +53,16 @@ body {
 }
 
 .downloads-list .download-row {
+  position: relative;
   display: flex;
+  box-sizing: border-box;
+  min-height: 32px;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  margin: 4px 0;
+  padding: 2px;
+  border: 1px solid rgb(204 204 204);
+  border-radius: 4px;
 }
 
 .downloads-panel button {
@@ -72,7 +79,11 @@ body {
   background: rgb(238 238 238);
 }
 
-.downloads-list .download-active {
+.downloads-panel .download-row button {
+  border: 0;
+}
+
+.downloads-list .download-highlighted {
   border-radius: 4px;
   background: rgb(225 239 255);
   box-shadow: inset 3px 0 rgb(35 118 201);
@@ -91,30 +102,49 @@ body {
   display: block;
   flex: 1;
   min-width: 0;
+  padding: 4px 6px;
   overflow: hidden;
   text-align: start;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.downloads-panel .downloads-close,
 .downloads-panel .reveal-download,
-.downloads-panel .preview-download {
+.downloads-panel .preview-download,
+.downloads-panel .delete-download {
   display: flex;
   flex: none;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  width: 24px;
+  height: 24px;
+  padding: 5px;
+}
+
+.download-actions {
+  position: absolute;
+  top: 50%;
+  right: 2px;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  border: 1px solid rgb(204 204 204);
+  border-radius: 4px;
+  background: rgb(255 255 255);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 20%);
   opacity: 0;
   pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .downloads-panel .download-icon {
-  font-size: 16px;
+  font-size: 14px;
 }
 
-.downloads-panel .download-row:hover .reveal-download,
-.downloads-panel .download-row:focus-within .reveal-download,
-.downloads-panel .download-row:hover .preview-download,
-.downloads-panel .download-row:focus-within .preview-download {
+.downloads-panel .download-row:hover .download-actions,
+.downloads-panel .download-row:focus-within .download-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -131,15 +161,21 @@ body {
     color: rgb(238 238 238);
   }
 
-  .downloads-panel button {
+  .downloads-panel button,
+  .downloads-list .download-row,
+  .download-actions {
     border-color: rgb(85 85 85);
+  }
+
+  .download-actions {
+    background: rgb(34 34 34);
   }
 
   .downloads-panel button:hover {
     background: rgb(51 51 51);
   }
 
-  .downloads-list .download-active {
+  .downloads-list .download-highlighted {
     background: rgb(35 62 89);
     box-shadow: inset 3px 0 rgb(115 181 247);
   }

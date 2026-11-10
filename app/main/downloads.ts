@@ -4,6 +4,7 @@ import {
   type Session,
   type WebContents,
   app,
+  dialog,
 } from "electron/main";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -28,16 +29,22 @@ export function initializeDownloads(
     Electron.DownloadItem,
     DownloadEntry | undefined
   >();
+  const highlightedDownloads = new Set<string>();
   const getDownloads = (): DownloadEntry[] => {
     const active = [...activeDownloads.values()]
       .filter((download) => download !== undefined)
       .reverse();
     return [
       ...active,
-      ...ConfigUtil.getConfigItem("recentDownloads", []).filter(
-        (download) =>
-          !active.some((item) => item.filePath === download.filePath),
-      ),
+      ...ConfigUtil.getConfigItem("recentDownloads", [])
+        .filter(
+          (download) =>
+            !active.some((item) => item.filePath === download.filePath),
+        )
+        .map((download) => ({
+          ...download,
+          highlighted: highlightedDownloads.has(download.filePath),
+        })),
     ];
   };
   const notifyDownloads = (show: boolean): void => {
@@ -126,6 +133,45 @@ export function initializeDownloads(
     }
 
     return error;
+  });
+
+  ipcMain.handle("delete-download", async (event, filePath) => {
+    validateDownload(event.senderFrame, filePath);
+    const window = BrowserWindow.fromWebContents(mainContents);
+    if (!window) {
+      throw new Error("Cannot confirm file deletion without the app window");
+    }
+
+    const {response} = await dialog.showMessageBox(window, {
+      type: "warning",
+      buttons: [t.__("Delete"), t.__("Cancel")],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      message: t.__("Are you sure you want to delete {{{fileName}}}?", {
+        fileName: path.basename(filePath),
+      }),
+      detail: t.__("The file will be moved to the trash.") + "\n" + filePath,
+    });
+    if (response !== 0) {
+      return;
+    }
+
+    validateDownload(event.senderFrame, filePath);
+    try {
+      await shell.trashItem(filePath);
+      ConfigUtil.setConfigItem(
+        "recentDownloads",
+        ConfigUtil.getConfigItem("recentDownloads", []).filter(
+          (download) => download.filePath !== filePath,
+        ),
+      );
+      highlightedDownloads.delete(filePath);
+      notifyDownloads(false);
+    } catch (error: unknown) {
+      logger.error("Unable to delete downloaded file", filePath, error);
+      throw error;
+    }
   });
 
   ipcMain.handle("read-markdown-download", async (event, filePath) => {
@@ -289,6 +335,7 @@ export function initializeDownloads(
           ),
         ];
         ConfigUtil.setConfigItem("recentDownloads", downloads);
+        highlightedDownloads.add(filePath);
       }
 
       notifyDownloads(state === "completed");

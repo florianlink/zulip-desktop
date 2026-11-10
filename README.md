@@ -23,8 +23,11 @@ Please see the [installation guide](https://zulip.com/help/desktop-app-install-g
 - Recent downloads panel: opens when a download starts and can be reopened
   from **View > Recent Downloads**. Active files are highlighted and show
   `(X % downloaded)` until completion (or a downloading label when the size is
-  unknown). Click a filename to open the saved file, or
-  use the folder icon to reveal it in the file manager. Download history is kept
+  unknown). Files stay highlighted after completion for the current app session.
+  Click a filename to open the saved file, or use the folder icon to reveal it
+  in the file manager. The trash icon asks for confirmation, then moves the file
+  to the system trash and removes it from the list. Icons appear on hover or
+  keyboard focus and are disabled during downloads. Download history is kept
   across restarts.
 - Markdown attachments in chat have an eye icon (**Preview Markdown**) beside their
   download link. Clicking it downloads the file using your normal download
@@ -36,6 +39,9 @@ Please see the [installation guide](https://zulip.com/help/desktop-app-install-g
 The downloads panel and Markdown preview use compact 12px text. Upload a CSS
 file in **Settings > General** to customize them as well as the chat views.
 Reopen the panel or preview to apply changes to the uploaded file.
+Each download has a single border enclosing its filename and compact 14px
+action icons, with 24px buttons. Filenames use the full row width; on hover or
+keyboard focus, the icons overlay the filename in an opaque, bordered toolbar.
 
 Markdown previews have no application menu. Zoom with **Ctrl + mouse wheel**
 or **Ctrl + plus/minus**, and reset with **Ctrl + 0** (use **Cmd** for keyboard
@@ -45,8 +51,9 @@ than navigating away from the preview.
 
 Panel styling hooks: `.downloads-panel`, `.downloads-header`,
 `.downloads-heading`, `.downloads-close`, `.downloads-list`, `.downloads-empty`,
-`.downloads-error`, `.download-row`, `.download-file`, `.preview-download`, and
-`.reveal-download`, and `.download-icon`. Preview hooks: `.downloads-preview` (the page body) and
+`.downloads-error`, `.download-row`, `.download-active`, `.download-highlighted`,
+`.download-progress`, `.download-file`, `.download-actions`, `.preview-download`, `.reveal-download`,
+`.delete-download`, and `.download-icon`. Preview hooks: `.downloads-preview` (the page body) and
 `.downloads-preview-content` (the rendered Markdown).
 
 For example:

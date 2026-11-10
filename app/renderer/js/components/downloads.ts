@@ -32,8 +32,14 @@ export class DownloadsView {
         <h2 id="downloads-heading" class="downloads-heading">
           ${t.__("Recent Downloads")}
         </h2>
-        <button id="close-downloads" class="downloads-close" type="button">
-          ${t.__("Close")}
+        <button
+          id="close-downloads"
+          class="downloads-close"
+          type="button"
+          aria-label="${t.__("Close")}"
+          title="${t.__("Close")}"
+        >
+          <i class="material-icons download-icon" aria-hidden="true">close</i>
         </button>
       </header>
       <p id="downloads-error" class="downloads-error" role="alert" hidden></p>
@@ -148,6 +154,10 @@ export class DownloadsView {
       const item = rows.get(download.filePath) ?? this.createRow(download);
       const active = download.progress !== undefined;
       item.classList.toggle("download-active", active);
+      item.classList.toggle(
+        "download-highlighted",
+        active || download.highlighted === true,
+      );
       item.setAttribute("aria-busy", String(active));
       const progress = item.querySelector<HTMLElement>(".download-progress")!;
       progress.hidden = !active;
@@ -183,6 +193,8 @@ export class DownloadsView {
     const progress = document.createElement("span");
     progress.className = "download-progress";
     item.append(button, progress);
+    const actions = document.createElement("div");
+    actions.className = "download-actions";
     if (download.fileName.toLowerCase().endsWith(".md")) {
       const previewButton = document.createElement("button");
       previewButton.type = "button";
@@ -200,7 +212,7 @@ export class DownloadsView {
       previewButton.addEventListener("click", () => {
         void this.previewFile(download.filePath);
       });
-      item.append(previewButton);
+      actions.append(previewButton);
     }
 
     const revealButton = document.createElement("button");
@@ -219,8 +231,36 @@ export class DownloadsView {
     revealButton.addEventListener("click", () => {
       void this.revealFile(download.filePath);
     });
-    item.append(revealButton);
+    actions.append(revealButton);
+    const deleteButton = document.createElement("button");
+    deleteButton.type = "button";
+    deleteButton.className = "delete-download";
+    deleteButton.title = t.__("Delete file");
+    deleteButton.setAttribute(
+      "aria-label",
+      t.__("Delete {{{fileName}}}", {fileName: download.fileName}),
+    );
+    const deleteIcon = document.createElement("span");
+    deleteIcon.className = "material-icons download-icon";
+    deleteIcon.setAttribute("aria-hidden", "true");
+    deleteIcon.textContent = "delete";
+    deleteButton.append(deleteIcon);
+    deleteButton.addEventListener("click", () => {
+      void this.deleteFile(download.filePath);
+    });
+    actions.append(deleteButton);
+    item.append(actions);
     return item;
+  }
+
+  private async deleteFile(filePath: string): Promise<void> {
+    this.error.hidden = true;
+    try {
+      await ipcRenderer.invoke("delete-download", filePath);
+    } catch (error: unknown) {
+      logger.error("Unable to delete downloaded file", error);
+      this.showError(t.__("Unable to delete downloaded file."));
+    }
   }
 
   private async previewFile(filePath: string): Promise<void> {

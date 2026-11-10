@@ -4,6 +4,7 @@ import type {MenuProperties, ServerConfig} from "./types.ts";
 
 export type DownloadEntry = Config["recentDownloads"][number] & {
   progress?: number | null;
+  highlighted?: boolean;
 };
 
 export type MainMessage = {
@@ -31,6 +32,7 @@ export type MainMessage = {
 };
 
 export type MainCall = {
+  "delete-download": (filePath: string) => void;
   "get-markdown-preview-labels": () => {preview: string; error: string};
   "get-recent-downloads": () => DownloadEntry[];
   "get-server-settings": (domain: string) => ServerConfig;
