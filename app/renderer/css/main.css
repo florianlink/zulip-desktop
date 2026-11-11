@@ -28,8 +28,14 @@ body {
   font-size: 12px;
 }
 
+.downloads-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+}
+
 .downloads-header {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -41,11 +47,18 @@ body {
 }
 
 .downloads-list {
-  max-height: calc(100vh - 160px);
+  min-height: 0;
   margin: 12px 0 0;
   padding: 0;
   overflow: auto;
   list-style: none;
+}
+
+.downloads-footer {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  margin-top: 12px;
 }
 
 .downloads-list li {
@@ -111,7 +124,6 @@ body {
 
 .downloads-panel .downloads-close,
 .downloads-panel .reveal-download,
-.downloads-panel .preview-download,
 .downloads-panel .delete-download {
   display: flex;
   flex: none;

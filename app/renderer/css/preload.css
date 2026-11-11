@@ -7,29 +7,3 @@
 .portico-container > .footer {
   display: none;
 }
-
-.inline-markdown-preview {
-  margin-inline-start: 0.4em;
-}
-
-.inline-markdown-preview-button {
-  display: inline-flex;
-  padding: 0.15em;
-  border: 0;
-  border-radius: 3px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  vertical-align: middle;
-  cursor: pointer;
-}
-
-.inline-markdown-preview-button:disabled {
-  cursor: wait;
-  opacity: 0.6;
-}
-
-.inline-markdown-preview-error {
-  margin-inline-start: 0.4em;
-  color: var(--color-text-danger, rgb(204 51 51));
-}

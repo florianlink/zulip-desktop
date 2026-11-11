@@ -190,7 +190,7 @@ test("recent downloads popup", async (t) => {
       await window.$eval(".download-row", (row) => {
         const bounds = row.getBoundingClientRect();
         return (
-          getComputedStyle(row).borderTopWidth === "1px" &&
+          Number.parseFloat(getComputedStyle(row).borderTopWidth) > 0 &&
           [...row.querySelectorAll("button")].every((button) => {
             const buttonBounds = button.getBoundingClientRect();
             return (
@@ -217,7 +217,7 @@ test("recent downloads popup", async (t) => {
           file.right >= actionBounds.right &&
           file.left < actionBounds.left &&
           style.position === "absolute" &&
-          style.borderTopWidth === "1px" &&
+          Number.parseFloat(style.borderTopWidth) > 0 &&
           ["rgb(255, 255, 255)", "rgb(34, 34, 34)"].includes(
             style.backgroundColor,
           )
@@ -428,6 +428,173 @@ test("recent downloads popup", async (t) => {
   }
 });
 
+test("recent downloads are limited to 100 files", async (t) => {
+  t.timeoutAfter(60e3);
+  let downloadResponse: http.ServerResponse | undefined;
+  const server = http.createServer((_request, response) => {
+    downloadResponse = response;
+    response.writeHead(200, {
+      "Content-Type": "application/octet-stream",
+      "Content-Length": "1000",
+    });
+    response.write(Buffer.alloc(100, "a"));
+  });
+  let app = await setup.createApp();
+  try {
+    const window = await app.firstWindow();
+    await window.waitForSelector("#connect");
+    const userData = await app.evaluate(({app}) => app.getPath("userData"));
+    const settingsPath = path.join(userData, "config", "settings.json");
+    const settings: unknown = JSON.parse(
+      await fs.readFile(settingsPath, "utf8"),
+    );
+    assert.ok(typeof settings === "object" && settings !== null);
+    const history = Array.from({length: 105}, (_, index) => ({
+      filePath: path.join(userData, `previous-${index}.txt`),
+      fileName: `previous-${index}.txt`,
+    }));
+    const oldestPath = history.at(-1)!.filePath;
+    await fs.writeFile(oldestPath, "Keep this downloaded file");
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify({...settings, recentDownloads: history}),
+    );
+    const readHistory = async (): Promise<unknown> => {
+      const settings: unknown = JSON.parse(
+        await fs.readFile(settingsPath, "utf8"),
+      );
+      assert.ok(
+        typeof settings === "object" &&
+          settings !== null &&
+          "recentDownloads" in settings,
+      );
+      return settings.recentDownloads;
+    };
+
+    app = await setup.restartApp(app);
+    const restartedWindow = await app.firstWindow();
+    await restartedWindow.waitForSelector("#connect");
+    await app.evaluate(({Menu}) => {
+      Menu.getApplicationMenu()!
+        .items.flatMap((item) => item.submenu?.items ?? [])
+        .find((item) => item.label === "Recent Downloads")!
+        .click();
+    });
+    await restartedWindow.waitForSelector(".download-file");
+    t.deepEqual(
+      await restartedWindow.locator(".download-file").allTextContents(),
+      history.slice(0, 100).map((download) => download.fileName),
+      "existing oversized history displays only the newest 100 files",
+    );
+    t.deepEqual(
+      await readHistory(),
+      history.slice(0, 100),
+      "existing oversized saved history is trimmed at startup",
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    assert.ok(address !== null && typeof address !== "string");
+    const completed = download(
+      app,
+      `http://127.0.0.1:${address.port}/file`,
+      "newest.txt",
+    );
+    await restartedWindow.waitForSelector(".download-active");
+    t.equal(
+      await restartedWindow.locator(".download-row").count(),
+      100,
+      "active downloads count toward the 100 displayed files",
+    );
+    t.equal(
+      await restartedWindow.locator(".download-file").first().textContent(),
+      "newest.txt",
+      "the active download appears first",
+    );
+    assert.ok(downloadResponse);
+    downloadResponse.end(Buffer.alloc(900, "b"));
+    const filePath = await completed;
+    await restartedWindow.waitForFunction(
+      () => document.querySelectorAll(".download-active").length === 0,
+    );
+    const expectedHistory = [
+      {filePath, fileName: "newest.txt"},
+      ...history.slice(0, 99),
+    ];
+    t.deepEqual(
+      await restartedWindow.locator(".download-file").allTextContents(),
+      expectedHistory.map((download) => download.fileName),
+      "a completed download evicts the oldest entry from the list",
+    );
+    t.deepEqual(
+      await readHistory(),
+      expectedHistory,
+      "saved history retains exactly the newest 100 files",
+    );
+    t.equal(
+      await fs.readFile(oldestPath, "utf8"),
+      "Keep this downloaded file",
+      "evicting a history entry does not delete the downloaded file",
+    );
+    t.ok(
+      await restartedWindow.$eval("#clear-downloads", (button) => {
+        const bounds = button.getBoundingClientRect();
+        const listBounds = document
+          .querySelector("#downloads-list")!
+          .getBoundingClientRect();
+        return bounds.top >= listBounds.bottom && bounds.bottom <= innerHeight;
+      }),
+      "Clear remains visible below the scrolling list",
+    );
+    await restartedWindow.focus("#clear-downloads");
+    await restartedWindow.keyboard.press("Enter");
+    await restartedWindow.waitForSelector(".downloads-empty");
+    t.equal(
+      await restartedWindow.locator(".download-row").count(),
+      0,
+      "Clear removes all completed entries",
+    );
+    t.deepEqual(await readHistory(), [], "Clear empties the saved history");
+    t.equal(
+      await fs.readFile(filePath, "utf8"),
+      "a".repeat(100) + "b".repeat(900),
+      "Clear keeps downloaded files on disk",
+    );
+    app = await setup.restartApp(app);
+    const clearedWindow = await app.firstWindow();
+    await clearedWindow.waitForSelector("#connect");
+    await app.evaluate(({Menu}) => {
+      Menu.getApplicationMenu()!
+        .items.flatMap((item) => item.submenu?.items ?? [])
+        .find((item) => item.label === "Recent Downloads")!
+        .click();
+    });
+    await clearedWindow.waitForSelector(".downloads-empty");
+    t.equal(
+      await clearedWindow.locator(".download-row").count(),
+      0,
+      "cleared history stays empty after restarting",
+    );
+  } finally {
+    downloadResponse?.destroy();
+    await setup.endTest(app);
+    if (server.listening) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+  }
+});
+
 test("active download progress", async (t) => {
   t.timeoutAfter(60e3);
   const responses = new Map<string, http.ServerResponse>();
@@ -500,8 +667,8 @@ test("active download progress", async (t) => {
     );
     t.equal(
       await window.locator(".download-row button:disabled").count(),
-      4,
-      "open, preview, reveal and delete are disabled until completion",
+      3,
+      "open, reveal and delete are disabled until completion",
     );
     await window.click("#close-downloads");
     responses.get("slow.md")!.write(Buffer.alloc(400, "b"));
@@ -535,6 +702,13 @@ test("active download progress", async (t) => {
       "cancelled.txt",
       "new concurrent download is first",
     );
+    t.deepEqual(
+      await window
+        .locator(".download-highlighted .download-file")
+        .allTextContents(),
+      ["cancelled.txt"],
+      "only the newest concurrent download is highlighted",
+    );
     responses.get("cancelled.txt")!.write(Buffer.alloc(400, "b"));
     await window.waitForFunction(
       () => document.querySelectorAll(".download-row").length === 1,
@@ -543,6 +717,13 @@ test("active download progress", async (t) => {
       await window.textContent(".download-file"),
       "slow.md",
       "cancelling removes only the cancelled download",
+    );
+    t.deepEqual(
+      await window
+        .locator(".download-highlighted .download-file")
+        .allTextContents(),
+      ["slow.md"],
+      "cancelling restores the highlight to the remaining active download",
     );
     responses.get("slow.md")!.end(Buffer.alloc(500, "c"));
     await window.waitForFunction(
@@ -579,9 +760,37 @@ test("active download progress", async (t) => {
         "(Downloading...)",
     );
     t.pass("unknown download sizes show an indeterminate label");
+    t.deepEqual(
+      await window
+        .locator(".download-highlighted .download-file")
+        .allTextContents(),
+      ["unknown.txt"],
+      "starting another download clears the previous completed file highlight",
+    );
+    await window.click("#clear-downloads");
+    await window.waitForFunction(
+      () => document.querySelectorAll(".download-row").length === 1,
+    );
+    t.equal(
+      await window.textContent(".download-active .download-file"),
+      "unknown.txt",
+      "Clear removes completed history but keeps running downloads visible",
+    );
+    t.equal(
+      await window.textContent(".download-progress"),
+      "(Downloading...)",
+      "Clear preserves download progress",
+    );
     responses.get("unknown.txt")!.end("done");
     await window.waitForFunction(
       () => document.querySelectorAll(".download-active").length === 0,
+    );
+    t.deepEqual(
+      await window
+        .locator(".download-highlighted .download-file")
+        .allTextContents(),
+      ["unknown.txt"],
+      "only the most recently completed download stays highlighted",
     );
     app = await setup.restartApp(app);
     window = await app.firstWindow();
@@ -595,8 +804,8 @@ test("active download progress", async (t) => {
     await window.waitForSelector(".download-file");
     t.deepEqual(
       await window.locator(".download-file").allTextContents(),
-      ["unknown.txt", "slow.md"],
-      "only completed downloads persist, without progress",
+      ["unknown.txt"],
+      "downloads completed after Clear persist without the cleared history",
     );
     t.equal(await window.locator(".download-active").count(), 0);
     t.equal(
@@ -795,13 +1004,11 @@ test("delete downloaded files", async (t) => {
   }
 });
 
-test("Markdown download preview", async (t) => {
+test("Markdown downloads use the standard file actions", async (t) => {
   t.timeoutAfter(60e3);
   const server = http.createServer((_request, response) => {
     response.writeHead(200, {"Content-Type": "application/octet-stream"});
-    response.end(
-      '# Preview heading\n\n**Bold text**\n\n| File | Status |\n| --- | --- |\n| Example | Done |\n\n<script>window.injected = true</script><img src="x" onerror="window.injected = true">',
-    );
+    response.end("# Downloaded Markdown");
   });
   const app = await setup.createApp();
   try {
@@ -817,183 +1024,32 @@ test("Markdown download preview", async (t) => {
     const url = `http://127.0.0.1:${address.port}/file`;
     const window = await app.firstWindow();
     await window.waitForSelector("#connect");
-    await download(app, url, "ordinary.txt");
-    await window.waitForSelector(".download-file");
-    t.equal(await window.locator(".preview-download").count(), 0);
-
     const filePath = await download(app, url, "example.MD");
-    const previewButton = window.locator(".preview-download");
-    await previewButton.waitFor({state: "attached"});
-    t.equal(
-      await previewButton.getAttribute("aria-label"),
-      "Preview example.MD",
+    await window.waitForSelector(".download-file");
+    t.equal(await fs.readFile(filePath, "utf8"), "# Downloaded Markdown");
+    t.equal(await window.textContent(".download-file"), "example.MD");
+    t.deepEqual(
+      await window
+        .locator(".download-actions button")
+        .evaluateAll((buttons) => buttons.map((button) => button.className)),
+      ["reveal-download", "delete-download"],
+      "Markdown files have only the standard download actions",
     );
-    await window.locator(".download-row").first().hover();
-    const previewPromise = app.waitForEvent("window");
-    await previewButton.click();
-    const preview = await previewPromise;
-    await preview.waitForSelector("h1");
-    t.equal(await preview.textContent("h1"), "Preview heading");
-    t.equal(await preview.textContent("strong"), "Bold text");
-    t.equal(await preview.locator("script").count(), 0);
-    t.equal(await preview.locator("[onerror]").count(), 0);
-    t.equal(
-      await preview
-        .locator(".downloads-preview-content td")
-        .first()
-        .evaluate((element) => getComputedStyle(element).fontSize),
-      "12px",
-      "Markdown tables inherit compact preview text",
-    );
-    t.equal(
-      await app.evaluate(({BrowserWindow}) =>
-        BrowserWindow.getAllWindows()
-          .find((item) => item.getTitle() === "example.MD")
-          ?.getTitle(),
-      ),
-      "example.MD",
-      "preview window title is the filename",
-    );
-    const previewWindow = await app.browserWindow(preview);
-    const pressZoomKey = async (keyCode: string, shift = false) => {
-      await previewWindow.evaluate(
-        (window, {keyCode, shift}) => {
-          const modifiers = shift ? ["control", "shift"] : ["control"];
-          window.webContents.sendInputEvent({
-            type: "keyDown",
-            keyCode,
-            modifiers,
-          });
-          window.webContents.sendInputEvent({
-            type: "keyUp",
-            keyCode,
-            modifiers,
-          });
-        },
-        {keyCode, shift},
-      );
-    };
-    const wheel = async (deltaY: number, control: boolean) => {
-      await previewWindow.evaluate(
-        async (window, {deltaY, control}) => {
-          const previousZoom = window.webContents.zoomLevel;
-          window.focus();
-          window.webContents.focus();
-          window.webContents.sendInputEvent({
-            type: "mouseMove",
-            x: 100,
-            y: 100,
-          });
-          window.webContents.sendInputEvent({
-            type: "mouseWheel",
-            x: 100,
-            y: 100,
-            deltaX: 0,
-            deltaY,
-            wheelTicksY: Math.sign(deltaY),
-            canScroll: true,
-            hasPreciseScrollingDeltas: false,
-            modifiers: control ? ["control"] : [],
-          });
-          if (control) {
-            const deadline = Date.now() + 2000;
-            while (
-              window.webContents.zoomLevel === previousZoom &&
-              Date.now() < deadline
-            ) {
-              await new Promise((resolve) => {
-                setTimeout(resolve, 20);
-              });
-            }
-          }
-        },
-        {deltaY, control},
-      );
-    };
-    t.equal(
-      await previewWindow.evaluate((window) => window.isMenuBarVisible()),
-      false,
-      "preview has no menu bar",
-    );
-    await preview.keyboard.press("Alt");
-    t.equal(
-      await previewWindow.evaluate((window) => window.isMenuBarVisible()),
-      false,
-      "Alt does not reveal a preview menu",
-    );
-    const originalZoom = await previewWindow.evaluate(
-      (window) => window.webContents.zoomLevel,
-    );
-    await pressZoomKey("=");
-    t.equal(
-      await previewWindow.evaluate((window) => window.webContents.zoomLevel),
-      originalZoom + 0.5,
-      "Ctrl plus zooms in without a menu",
-    );
-    await pressZoomKey("-");
-    t.equal(
-      await previewWindow.evaluate((window) => window.webContents.zoomLevel),
-      originalZoom,
-      "Ctrl minus zooms out",
-    );
-    await pressZoomKey("+", true);
-    t.equal(
-      await previewWindow.evaluate((window) => window.webContents.zoomLevel),
-      originalZoom + 0.5,
-      "Ctrl Shift plus also zooms in",
-    );
-    await pressZoomKey("0");
-    t.equal(
-      await previewWindow.evaluate((window) => window.webContents.zoomLevel),
-      0,
-      "Ctrl zero resets zoom",
-    );
-    await wheel(120, true);
-    t.ok(
-      (await previewWindow.evaluate((window) => window.webContents.zoomLevel)) >
-        0,
-      "Ctrl wheel zooms in",
-    );
-    await wheel(-120, true);
-    t.equal(
-      await previewWindow.evaluate((window) => window.webContents.zoomLevel),
-      0,
-      "Ctrl wheel zooms out",
-    );
-    await wheel(-120, false);
-    t.equal(
-      await previewWindow.evaluate((window) => window.webContents.zoomLevel),
-      0,
-      "wheel without Ctrl does not change zoom",
-    );
-    await preview.close();
-    await setCustomCss(
-      app,
-      ".downloads-preview { font-size: 10px; } .downloads-preview-content table { color: rgb(1, 2, 3); }",
-    );
-    const styledPreviewPromise = app.waitForEvent("window");
-    await previewButton.click();
-    const styledPreview = await styledPreviewPromise;
-    await styledPreview.waitForSelector("table");
-    await styledPreview.waitForFunction(
-      () => getComputedStyle(document.body).fontSize === "10px",
-    );
-    t.equal(
-      await styledPreview
-        .locator("table")
-        .evaluate((element) => getComputedStyle(element).color),
-      "rgb(1, 2, 3)",
-      "uploaded CSS styles the Markdown preview",
-    );
-    await styledPreview.close();
-    await setCustomCss(app, null);
-    await fs.unlink(filePath);
-    await previewButton.click();
+    await app.evaluate(({shell}, expectedPath) => {
+      shell.openPath = async (filePath) => {
+        if (filePath !== expectedPath) {
+          throw new Error("Wrong downloaded file opened");
+        }
+
+        return "Test Markdown open error";
+      };
+    }, filePath);
+    await window.click(".download-file");
     await window.waitForSelector("#downloads-error");
     t.equal(
       await window.textContent("#downloads-error"),
-      "Unable to preview downloaded file.",
-      "previewing a removed file displays an error",
+      "Unable to open downloaded file: Test Markdown open error",
+      "clicking Markdown opens the file with the system application",
     );
   } finally {
     await setup.endTest(app);

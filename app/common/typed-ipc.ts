@@ -32,16 +32,13 @@ export type MainMessage = {
 };
 
 export type MainCall = {
+  "clear-recent-downloads": () => void;
   "delete-download": (filePath: string) => void;
-  "get-markdown-preview-labels": () => {preview: string; error: string};
   "get-recent-downloads": () => DownloadEntry[];
   "get-server-settings": (domain: string) => ServerConfig;
   "is-online": (url: string) => boolean;
   "open-download": (filePath: string) => string;
-  "open-markdown-preview": (filePath: string, html: string) => void;
   "poll-clipboard": (key: Uint8Array, sig: Uint8Array) => string | undefined;
-  "preview-markdown-url": (url: string) => void;
-  "read-markdown-download": (filePath: string) => string;
   "reveal-download": (filePath: string) => void;
   "save-server-icon": (iconURL: string) => string | null;
 };
@@ -69,7 +66,6 @@ export type RendererMessage = {
     rendererCallbackId: number,
   ) => void;
   "play-ding-sound": () => void;
-  "preview-markdown-download": (filePath: string) => void;
   "reload-current-viewer": () => void;
   "reload-proxy": (showAlert: boolean) => void;
   "reload-viewer": () => void;

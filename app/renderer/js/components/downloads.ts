@@ -1,8 +1,5 @@
 import fs from "node:fs/promises";
 
-import DOMPurify from "dompurify";
-import MarkdownIt from "markdown-it";
-
 import * as ConfigUtil from "../../../common/config-util.ts";
 import {html} from "../../../common/html.ts";
 import Logger from "../../../common/logger-util.ts";
@@ -11,7 +8,6 @@ import type {DownloadEntry} from "../../../common/typed-ipc.ts";
 import {ipcRenderer} from "../typed-ipc-renderer.ts";
 
 const logger = new Logger({file: "downloads.log"});
-const markdown = new MarkdownIt({html: true});
 
 export class DownloadsView {
   private readonly panel: HTMLElement;
@@ -44,6 +40,9 @@ export class DownloadsView {
       </header>
       <p id="downloads-error" class="downloads-error" role="alert" hidden></p>
       <ul id="downloads-list" class="downloads-list"></ul>
+      <footer class="downloads-footer">
+        <button id="clear-downloads" type="button">${t.__("Clear")}</button>
+      </footer>
     `.html;
     this.list = this.panel.querySelector<HTMLUListElement>("#downloads-list")!;
     this.error =
@@ -55,6 +54,11 @@ export class DownloadsView {
       .querySelector("#close-downloads")!
       .addEventListener("click", () => {
         this.hide();
+      });
+    this.panel
+      .querySelector("#clear-downloads")!
+      .addEventListener("click", () => {
+        void this.clearDownloads();
       });
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape" && !this.panel.hidden) {
@@ -70,9 +74,6 @@ export class DownloadsView {
     });
     ipcRenderer.on("show-recent-downloads", () => {
       void this.open();
-    });
-    ipcRenderer.on("preview-markdown-download", (_event, filePath) => {
-      void this.previewFile(filePath);
     });
   }
 
@@ -156,7 +157,7 @@ export class DownloadsView {
       item.classList.toggle("download-active", active);
       item.classList.toggle(
         "download-highlighted",
-        active || download.highlighted === true,
+        download.highlighted === true,
       );
       item.setAttribute("aria-busy", String(active));
       const progress = item.querySelector<HTMLElement>(".download-progress")!;
@@ -195,26 +196,6 @@ export class DownloadsView {
     item.append(button, progress);
     const actions = document.createElement("div");
     actions.className = "download-actions";
-    if (download.fileName.toLowerCase().endsWith(".md")) {
-      const previewButton = document.createElement("button");
-      previewButton.type = "button";
-      previewButton.className = "preview-download";
-      previewButton.title = t.__("Preview Markdown");
-      previewButton.setAttribute(
-        "aria-label",
-        t.__("Preview {{{fileName}}}", {fileName: download.fileName}),
-      );
-      const previewIcon = document.createElement("span");
-      previewIcon.className = "material-icons download-icon";
-      previewIcon.setAttribute("aria-hidden", "true");
-      previewIcon.textContent = "visibility";
-      previewButton.append(previewIcon);
-      previewButton.addEventListener("click", () => {
-        void this.previewFile(download.filePath);
-      });
-      actions.append(previewButton);
-    }
-
     const revealButton = document.createElement("button");
     revealButton.type = "button";
     revealButton.className = "reveal-download";
@@ -253,6 +234,16 @@ export class DownloadsView {
     return item;
   }
 
+  private async clearDownloads(): Promise<void> {
+    this.error.hidden = true;
+    try {
+      await ipcRenderer.invoke("clear-recent-downloads");
+    } catch (error: unknown) {
+      logger.error("Unable to clear download history", error);
+      this.showError(t.__("Unable to clear download history."));
+    }
+  }
+
   private async deleteFile(filePath: string): Promise<void> {
     this.error.hidden = true;
     try {
@@ -260,26 +251,6 @@ export class DownloadsView {
     } catch (error: unknown) {
       logger.error("Unable to delete downloaded file", error);
       this.showError(t.__("Unable to delete downloaded file."));
-    }
-  }
-
-  private async previewFile(filePath: string): Promise<void> {
-    this.error.hidden = true;
-    try {
-      const source = await ipcRenderer.invoke(
-        "read-markdown-download",
-        filePath,
-      );
-      const sanitizedHtml = DOMPurify.sanitize(markdown.render(source));
-      await ipcRenderer.invoke(
-        "open-markdown-preview",
-        filePath,
-        sanitizedHtml,
-      );
-    } catch (error: unknown) {
-      logger.error("Unable to preview downloaded file", error);
-      this.showError(t.__("Unable to preview downloaded file."));
-      await this.show(true);
     }
   }
 
